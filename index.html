@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tag Question Jeopardy</title>
+<title>Tag! You’re It!</title>
 <style>
   :root{
     --blue:#0a1f8f; --blue-hi:#1637d6; --gold:#ffcc33; --ink:#050b3a; --white:#f7f9ff;
@@ -72,6 +72,18 @@
   .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
   .hint{position:absolute;bottom:14px;font-size:14px;color:#8d9be8}
 
+  /* ---------- timer + tag banner ---------- */
+  #timerWrap{width:min(900px,80vw);display:flex;align-items:center;gap:16px}
+  #timerBar{flex:1;height:18px;background:#06125f;border-radius:99px;overflow:hidden;border:2px solid #000}
+  #timerFill{height:100%;width:100%;background:var(--green);transition:background .3s}
+  #timerNum{font-family:"Arial Black",Impact,sans-serif;font-size:36px;min-width:64px;text-align:right}
+  #tagBanner{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:30;pointer-events:none;
+    background:rgba(5,11,58,.55);font-family:"Arial Black",Impact,sans-serif;text-align:center;opacity:0}
+  #tagBanner.show{animation:tagpop 1.6s ease both}
+  #tagBanner span{display:block;font-size:clamp(28px,4vw,56px);color:#fff;margin-top:8px}
+  #tagBanner b{display:block;font-size:clamp(60px,12vw,190px);color:var(--gold);text-shadow:0 6px 0 #7a5a00;line-height:1}
+  @keyframes tagpop{0%{opacity:0;transform:scale(.6) rotate(-6deg)}15%{opacity:1;transform:scale(1.08) rotate(2deg)}25%{transform:scale(1) rotate(0)}80%{opacity:1}100%{opacity:0;transform:scale(1.05)}}
+
   /* ---------- final ---------- */
   #winner{font-family:"Arial Black",Impact,sans-serif;font-size:clamp(34px,6vw,90px);color:var(--gold)}
 </style>
@@ -80,8 +92,8 @@
 
 <!-- SETUP -->
 <section id="setup">
-  <h1>TAG QUESTION<br>JEOPARDY!</h1>
-  <p>Section 11.4 &middot; isn’t it?</p>
+  <h1>TAG!<br>YOU’RE IT!</h1>
+  <p>Tag question Jeopardy &middot; section 11.4 &middot; isn’t it?</p>
   <div>
     <p style="margin-bottom:10px">How many teams?</p>
     <div class="team-count" id="teamCount"></div>
@@ -94,8 +106,10 @@
 <!-- GAME -->
 <section id="game" class="hidden">
   <div id="bar">
-    <h2>TAG QUESTION JEOPARDY!</h2>
+    <h2>TAG! YOU’RE IT!</h2>
     <div class="tools">
+      <button class="ghost" id="timerBtn">Timer: on</button>
+      <button class="ghost" id="muteBtn">Sound: on</button>
       <button class="ghost" id="finalBtn">Final round</button>
       <button class="ghost" id="newBtn">New game</button>
     </div>
@@ -109,12 +123,15 @@
   <div id="clueMeta"></div>
   <div id="dd" class="hidden">DAILY DOUBLE!</div>
   <div id="ddSetup" class="wager hidden"></div>
+  <div id="timerWrap" class="hidden"><div id="timerBar"><div id="timerFill"></div></div><div id="timerNum"></div></div>
   <div id="clueText"></div>
   <div id="clueAns" class="hidden"></div>
   <div id="clueNote" class="hidden"></div>
   <div id="clueActions"></div>
   <div class="hint">Space = reveal &middot; Esc = back to board</div>
 </div>
+
+<div id="tagBanner"><div><b>TAG!</b><span id="tagWho"></span></div></div>
 
 <script>
 /* =====================================================================
@@ -194,6 +211,8 @@ const CATEGORIES = [
   ]}
 ];
 
+const TIMER_SECONDS = 30;   // change this to give teams more or less time
+
 const FINAL = {
   category: "Final Jeopardy: The Big Picture",
   q: "Name the three types of tags covered in section 11.4.",
@@ -209,6 +228,56 @@ let current = null;        // clue in play
 
 function save(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }catch(e){} }
 function load(){ try{ return JSON.parse(localStorage.getItem(SAVE_KEY)||"null"); }catch(e){ return null; } }
+
+/* ---- sound ---- */
+let audio = null, soundOn = true, timerOn = true;
+try{ soundOn = localStorage.getItem("tagJeopardy.sound")!=="off"; timerOn = localStorage.getItem("tagJeopardy.timer")!=="off"; }catch(e){}
+function ctx(){ if(!soundOn) return null; try{ audio = audio || new (window.AudioContext||window.webkitAudioContext)(); if(audio.state==="suspended") audio.resume(); return audio; }catch(e){ return null; } }
+function tone(freq, dur, type="sine", when=0, vol=.18, slideTo){
+  const a = ctx(); if(!a) return;
+  const o = a.createOscillator(), g = a.createGain(), t = a.currentTime + when;
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t+dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t+dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t+dur+.02);
+}
+const sfx = {
+  tick(){ tone(900,.06,"square",0,.07); },
+  buzz(){ tone(130,.7,"sawtooth",0,.22); tone(98,.7,"square",0,.12); },
+  good(){ tone(660,.14,"triangle"); tone(880,.14,"triangle",.12); tone(1320,.3,"triangle",.24); },
+  bad(){ tone(300,.3,"sawtooth",0,.15,120); },
+  tag(){ tone(400,.18,"square",0,.12,1200); tone(1200,.12,"triangle",.2); tone(1600,.2,"triangle",.3); },
+  dd(){ [523,659,784,1046,784,1046].forEach((f,i)=>tone(f,.16,"triangle",i*.13,.17)); },
+  reveal(){ tone(520,.1,"triangle"); tone(780,.18,"triangle",.09); }
+};
+function paintToggles(){ $("muteBtn").textContent = "Sound: "+(soundOn?"on":"off"); $("timerBtn").textContent = "Timer: "+(timerOn?"on":"off"); }
+$("muteBtn").onclick = ()=>{ soundOn=!soundOn; try{localStorage.setItem("tagJeopardy.sound",soundOn?"on":"off");}catch(e){} paintToggles(); if(soundOn) sfx.tick(); };
+$("timerBtn").onclick = ()=>{ timerOn=!timerOn; try{localStorage.setItem("tagJeopardy.timer",timerOn?"on":"off");}catch(e){} paintToggles(); };
+
+/* ---- countdown ---- */
+let tInt = null;
+function stopTimer(){ clearInterval(tInt); tInt = null; }
+function startTimer(){
+  stopTimer(); const wrap = $("timerWrap");
+  if(!timerOn){ wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  let left = TIMER_SECONDS; const fill = $("timerFill"), num = $("timerNum");
+  const paint = ()=>{ num.textContent = left; fill.style.width = (left/TIMER_SECONDS*100)+"%";
+    fill.style.background = left<=5 ? "var(--red)" : left<=10 ? "var(--gold)" : "var(--green)"; };
+  paint();
+  tInt = setInterval(()=>{
+    left--; paint();
+    if(left>0 && left<=5) sfx.tick();
+    if(left<=0){ stopTimer(); sfx.buzz(); }
+  },1000);
+}
+
+/* ---- "Tag! You're it!" banner ---- */
+function tagBanner(i){
+  $("tagWho").textContent = state.teams[i].name + ", you’re it!";
+  const b = $("tagBanner"); b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
+  sfx.tag();
+}
 
 /* ---- setup ---- */
 function renderCount(){
@@ -285,7 +354,7 @@ function openClue(ci,r){
   $("dd").classList.toggle("hidden", !current.dd);
   $("ddSetup").classList.add("hidden");
   $("clue").classList.remove("hidden");
-  if(current.dd) setupDailyDouble(); else showQuestion();
+  if(current.dd){ sfx.dd(); setupDailyDouble(); } else showQuestion();
 }
 function setupDailyDouble(){
   const w = $("ddSetup"); w.classList.remove("hidden");
@@ -308,9 +377,10 @@ function showQuestion(){
   const acts = $("clueActions"); acts.innerHTML = "";
   const rev = document.createElement("button"); rev.className="big"; rev.textContent="Reveal answer"; rev.onclick = reveal;
   acts.appendChild(rev);
+  startTimer();
 }
 function reveal(){
-  if(current.revealed) return; current.revealed = true;
+  if(current.revealed) return; current.revealed = true; stopTimer(); sfx.reveal();
   $("clueAns").textContent = current.clue.a; $("clueAns").classList.remove("hidden");
   if(current.clue.note){ $("clueNote").textContent = current.clue.note; $("clueNote").classList.remove("hidden"); }
   const acts = $("clueActions"); acts.innerHTML = "";
@@ -325,7 +395,9 @@ function reveal(){
     const apply = sign => {
       const prev = current.marks[i] || 0; tm.score += sign*amt - prev; current.marks[i] = sign*amt;
       no.classList.toggle("used", sign<0); ok.classList.toggle("used", sign>0);
-      if(sign>0){ state.turn = i; } save(); renderTeams();
+      if(sign>0){ state.turn = i; current.tagTo = i; sfx.good(); }
+      else { sfx.bad(); if(current.tagTo===undefined || current.dd) current.tagTo = (i+1) % state.teams.length; }
+      save(); renderTeams();
     };
     ok.onclick = ()=>apply(+1); no.onclick = ()=>apply(-1);
     aw.appendChild(card);
@@ -336,12 +408,17 @@ function reveal(){
   acts.append(aw, nobody, done);
 }
 function closeClue(){
-  $("clue").classList.add("hidden"); current = null; renderBoard(); renderTeams();
+  stopTimer(); $("timerWrap").classList.add("hidden");
+  const to = current && current.tagTo;
+  $("clue").classList.add("hidden");
+  if(to!==undefined && state){ state.turn = to; save(); }
+  current = null; renderBoard(); renderTeams();
+  if(to!==undefined && state) tagBanner(to);
 }
 
 /* ---- final ---- */
 $("finalBtn").onclick = ()=>{
-  current = { final:true, revealed:false };
+  current = { final:true, revealed:false }; $("timerWrap").classList.add("hidden"); stopTimer();
   $("clueMeta").textContent = FINAL.category;
   $("dd").classList.add("hidden"); $("ddSetup").classList.add("hidden");
   $("clueText").textContent = FINAL.q;
@@ -375,7 +452,7 @@ document.addEventListener("keydown", e=>{
 });
 
 /* ---- boot ---- */
-renderCount(); renderNames(); showSetup();
+paintToggles(); renderCount(); renderNames(); showSetup();
 </script>
 </body>
 </html>

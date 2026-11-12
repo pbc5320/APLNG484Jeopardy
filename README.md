@@ -1,7 +1,8 @@
-# Tag Question Jeopardy
+# Tag! You’re It!
 
 A classroom Jeopardy game for the tag-questions presentation (section 11.4).
 
+- Tag-themed: whoever gets a clue right is “it” and picks next; a miss tags the next team. Optional 30 s timer and sound (toggle in the top bar; change TIMER_SECONDS in index.html).
 - 5 categories × 5 clues, 1–6 teams, running scores, one hidden Daily Double, and a Final round.
 - Single file, no build step: open `index.html`, or serve it with GitHub Pages.
 - Edit the clues at the top of the `<script>` in `index.html` (`CATEGORIES` and `FINAL`).
